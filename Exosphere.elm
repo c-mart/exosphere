@@ -7,6 +7,7 @@ import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
+import List.Extra
 import Filesize exposing (format)
 
 
@@ -86,7 +87,7 @@ type alias Endpoints =
 
 type alias Image =
     { name : String
-    , id : String
+    , uuid : String
     , size : Int
     , checksum : String
     , diskFormat : String
@@ -96,7 +97,20 @@ type alias Image =
 
 type alias Server =
     { name : String
-    , id : String
+    , uuid : String
+    , details : Maybe ServerDetails
+    }
+
+
+type alias ServerDetails =
+    {- Todo add things like IP addresses, flavor, image, metadata, vols, sec groups, etc -}
+    {- Todo make status and powerState union types, keyName a key type,
+       created a real date/time type, etc
+    -}
+    { status : String
+    , created : String
+    , powerState : Int
+    , keyName : String
     }
 
 
@@ -115,6 +129,8 @@ type Msg
     | ReceiveServers (Result Http.Error (List Server))
     | LaunchImage Image
     | ChangeViewState ViewState
+    | RequestServerDetails Server
+    | ReceiveServerDetails Server (Result Http.Error ServerDetails)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -185,6 +201,12 @@ update msg model =
 
         ChangeViewState state ->
             ( { model | viewState = state }, Cmd.none )
+
+        RequestServerDetails server ->
+            ( model, requestServerDetails model server )
+
+        ReceiveServerDetails server result ->
+            receiveServerDetails model server result
 
 
 requestAuthToken : Model -> Cmd Msg
@@ -321,9 +343,10 @@ decodeServers =
 
 serverDecoder : Decode.Decoder Server
 serverDecoder =
-    Decode.map2 Server
+    Decode.map3 Server
         (Decode.field "name" Decode.string)
         (Decode.field "id" Decode.string)
+        (Decode.succeed Nothing)
 
 
 receiveServers : Model -> Result Http.Error (List Server) -> ( Model, Cmd Msg )
@@ -334,6 +357,51 @@ receiveServers model result =
 
         Ok servers ->
             ( { model | servers = Just servers }, Cmd.none )
+
+
+requestServerDetails model server =
+    Http.request
+        { method = "GET"
+        , headers = [ Http.header "X-Auth-Token" (Maybe.withDefault "TODO handle this better" model.authToken) ]
+        , url = model.endpoints.nova ++ "/servers/" ++ server.uuid
+        , body = Http.emptyBody
+        , expect = Http.expectJson decodeServerDetails
+        , timeout = Nothing
+        , withCredentials = False
+        }
+        |> Http.send (ReceiveServerDetails server)
+
+
+receiveServerDetails : Model -> Server -> Result Http.Error ServerDetails -> ( Model, Cmd Msg )
+receiveServerDetails model server result =
+    case result of
+        Err _ ->
+            ( model, Cmd.none )
+
+        Ok serverDetails ->
+            let
+                newServer =
+                    { server | details = Just serverDetails }
+
+                newServers =
+                    case model.servers of
+                        {- This is a hack -}
+                        Nothing ->
+                            Nothing
+
+                        Just servers ->
+                            Just (List.Extra.replaceIf (\s -> s.uuid == newServer.uuid) newServer servers)
+            in
+                ( { model | servers = newServers, viewState = ServerDetail newServer }, Cmd.none )
+
+
+decodeServerDetails : Decode.Decoder ServerDetails
+decodeServerDetails =
+    Decode.map4 ServerDetails
+        (Decode.at [ "server", "status" ] Decode.string)
+        (Decode.at [ "server", "created" ] Decode.string)
+        (Decode.at [ "server", "OS-EXT-STS:power_state" ] Decode.int)
+        (Decode.at [ "server", "key_name" ] Decode.string)
 
 
 subscriptions : Model -> Sub Msg
@@ -366,8 +434,8 @@ view model =
                     , viewServers model
                     ]
 
-            _ ->
-                div [] []
+            ServerDetail server ->
+                viewServerDetails server
         ]
 
 
@@ -498,7 +566,7 @@ renderImage image =
                 ]
             , tr []
                 [ td [] [ text "UUID" ]
-                , td [] [ text image.id ]
+                , td [] [ text image.uuid ]
                 ]
             ]
         ]
@@ -520,7 +588,8 @@ renderServer : Server -> Html Msg
 renderServer server =
     div []
         [ p [] [ strong [] [ text server.name ] ]
-        , text ("UUID: " ++ server.id)
+        , text ("UUID: " ++ server.uuid)
+        , button [ onClick (ChangeViewState (ServerDetail server)) ] [ text "Details" ]
         ]
 
 
@@ -532,3 +601,17 @@ viewNav model =
         , button [ onClick (ChangeViewState ListImages) ] [ text "Images" ]
         , button [ onClick (ChangeViewState ListUserServers) ] [ text "My Servers" ]
         ]
+
+
+viewServerDetails : Server -> Html Msg
+viewServerDetails server =
+    case server.details of
+        Nothing ->
+            div []
+                [ button [ onClick (RequestServerDetails server) ] [ text "Get server details" ]
+                ]
+
+        Just _ ->
+            div []
+                [ text (toString server.details)
+                ]
