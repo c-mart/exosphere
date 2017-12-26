@@ -46,6 +46,7 @@ init =
       , images = []
       , servers = []
       , viewState = Login
+      , createServerRequest = CreateServerRequest "" "" "" ""
       }
     , Cmd.none
     )
@@ -59,6 +60,7 @@ type alias Model =
     , images : List Image
     , servers : List Server
     , viewState : ViewState
+    , createServerRequest : CreateServerRequest
     }
 
 
@@ -68,6 +70,7 @@ type ViewState
     | ListImages
     | ListUserServers
     | ServerDetail Server
+    | CreateServer Image
 
 
 type alias Creds =
@@ -123,6 +126,14 @@ type alias ServerDetails =
     }
 
 
+type alias CreateServerRequest =
+    { name : String
+    , imageUuid : String
+    , sizeUuid : String
+    , keyName : String
+    }
+
+
 type Msg
     = InputAuthURL String
     | InputProjectDomain String
@@ -136,10 +147,15 @@ type Msg
     | ReceiveImages (Result Http.Error (List Image))
     | RequestServers
     | ReceiveServers (Result Http.Error (List Server))
-    | LaunchImage Image
     | ChangeViewState ViewState
     | RequestServerDetails Server
     | ReceiveServerDetails Server (Result Http.Error ServerDetails)
+    | InputCreateServerName String
+    | InputCreateServerImage String
+    | InputCreateServerSize String
+    | InputCreateServerKeyName String
+    | RequestCreateServer
+    | ReceiveCreateServer (Result Http.Error String)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -199,9 +215,6 @@ update msg model =
         ReceiveImages result ->
             receiveImages model result
 
-        LaunchImage image ->
-            ( model, Cmd.none )
-
         RequestServers ->
             ( model, requestServers model )
 
@@ -216,6 +229,44 @@ update msg model =
 
         ReceiveServerDetails server result ->
             receiveServerDetails model server result
+
+        InputCreateServerName serverName ->
+            let
+                request =
+                    model.createServerRequest
+            in
+                ( { model | createServerRequest = { request | name = serverName } }, Cmd.none )
+
+        InputCreateServerImage imageUuid ->
+            let
+                request =
+                    model.createServerRequest
+            in
+                ( { model | createServerRequest = { request | imageUuid = imageUuid } }, Cmd.none )
+
+        InputCreateServerSize sizeUuid ->
+            let
+                request =
+                    model.createServerRequest
+            in
+                ( { model | createServerRequest = { request | sizeUuid = sizeUuid } }, Cmd.none )
+
+        InputCreateServerKeyName keyName ->
+            let
+                request =
+                    model.createServerRequest
+            in
+                ( { model | createServerRequest = { request | keyName = keyName } }, Cmd.none )
+
+        RequestCreateServer ->
+            ( model, requestCreateServer model )
+
+        ReceiveCreateServer result ->
+            ( { model | viewState = Home }, Cmd.none )
+
+
+
+{- Todo more things here -}
 
 
 requestAuthToken : Model -> Cmd Msg
@@ -376,6 +427,7 @@ receiveServers model result =
             ( { model | servers = servers }, Cmd.none )
 
 
+requestServerDetails : Model -> Server -> Cmd Msg
 requestServerDetails model server =
     Http.request
         { method = "GET"
@@ -418,6 +470,37 @@ decodeServerDetails =
         (Decode.at [ "server", "key_name" ] Decode.string)
 
 
+requestCreateServer : Model -> Cmd Msg
+requestCreateServer model =
+    let
+        requestBody =
+            Encode.object
+                [ ( "server"
+                  , Encode.object
+                        [ ( "name", Encode.string model.createServerRequest.name )
+                        , ( "flavorRef", Encode.string model.createServerRequest.sizeUuid )
+                        , ( "imageRef", Encode.string model.createServerRequest.imageUuid )
+                        , ( "key_name", Encode.string model.createServerRequest.keyName )
+                        , ( "networks", Encode.string "auto" )
+                        ]
+                  )
+                ]
+    in
+        Http.request
+            { method = "POST"
+            , headers =
+                [ Http.header "X-Auth-Token" model.authToken
+                , Http.header "OpenStack-API-Version" "compute 2.53"
+                ]
+            , url = model.endpoints.nova ++ "/servers"
+            , body = Http.jsonBody requestBody
+            , expect = Http.expectString
+            , timeout = Nothing
+            , withCredentials = True
+            }
+            |> Http.send ReceiveCreateServer
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.none
@@ -452,6 +535,12 @@ view model =
                 div []
                     [ viewNav model
                     , viewServerDetails server
+                    ]
+
+            CreateServer image ->
+                div []
+                    [ viewNav model
+                    , viewCreateServer model image
                     ]
         ]
 
@@ -555,7 +644,7 @@ renderImage : Image -> Html Msg
 renderImage image =
     div []
         [ p [] [ strong [] [ text image.name ] ]
-        , button [ onClick (LaunchImage image) ] [ text "Launch" ]
+        , button [ onClick (ChangeViewState (CreateServer image)) ] [ text "Launch" ]
         , table []
             [ tr []
                 [ th [] [ text "Property" ]
@@ -653,3 +742,61 @@ viewServerDetails server =
                         ]
                     ]
                 ]
+
+
+viewCreateServer : Model -> Image -> Html Msg
+viewCreateServer model image =
+    div []
+        [ h2 [] [ text "Create Server" ]
+        , table []
+            [ tr []
+                [ th [] [ text "Property" ]
+                , th [] [ text "Value" ]
+                ]
+            , tr []
+                [ td [] [ text "Server Name" ]
+                , td []
+                    [ input
+                        [ type_ "text"
+                        , placeholder "My Server"
+                        , onInput InputCreateServerName
+                        ]
+                        []
+                    ]
+                ]
+            , tr []
+                [ td [] [ text "Image" ]
+                , td []
+                    [ input
+                        [ type_ "text"
+                        , value image.uuid
+                        , onInput InputCreateServerImage
+                        ]
+                        []
+                    ]
+                ]
+            , tr []
+                [ td [] [ text "Size (hard-coded for now)" ]
+                , td []
+                    [ input
+                        [ type_ "text"
+                        , value "ba4bb37d-9327-4c4e-93ce-ff70c10ec3e9"
+                        , onInput InputCreateServerSize
+                        ]
+                        []
+                    ]
+                ]
+            , tr []
+                [ td [] [ text "SSH key name (todo implement a picker)" ]
+                , td []
+                    [ input
+                        [ type_ "text"
+                        , value "cmart"
+                        , onInput InputCreateServerKeyName
+                        ]
+                        []
+                    ]
+                ]
+            ]
+        , button [ onClick RequestCreateServer ] [ text "Create" ]
+        ]
