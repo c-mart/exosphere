@@ -381,7 +381,7 @@ renderMessage message =
 
 renderProviderPicker : Provider -> Html Msg
 renderProviderPicker provider =
-    button [ onClick (ChangeViewState (Home provider.name)) ] [ text provider.name ]
+    button [ onClick (ChangeViewState (ListUserServers provider.name)) ] [ text provider.name ]
 
 
 renderImage : Provider -> Image -> Html Msg

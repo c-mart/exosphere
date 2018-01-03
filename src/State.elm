@@ -293,7 +293,7 @@ update msg model =
 
         ReceiveDeleteServer providerName _ ->
             {- Todo this ignores the result of server deletion API call, we should display errors to user -}
-            update (ChangeViewState (Home providerName)) model
+            update (ChangeViewState (ListUserServers providerName)) model
 
         ReceiveNetworks providerName result ->
             case Helpers.providerLookup model providerName of
